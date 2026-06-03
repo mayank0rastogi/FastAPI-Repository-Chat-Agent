@@ -511,6 +511,3 @@ curl http://localhost:8000/api/index/status/abc123
 5. **Agent Metrics**: Prometheus metrics for agent performance
 6. **Authentication**: JWT-based API authentication
 
-## 📄 License
-
-MIT License - See LICENSE file for details.
