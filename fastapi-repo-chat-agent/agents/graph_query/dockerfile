@@ -1,0 +1,28 @@
+FROM python:3.11-slim AS base
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+FROM base AS builder
+COPY pyproject.toml .
+RUN pip install --no-cache-dir hatchling && \
+    pip install --no-cache-dir \
+    mcp fastapi uvicorn[standard] httpx pydantic pydantic-settings \
+    openai neo4j redis structlog tenacity anyio gitpython
+
+FROM builder AS final
+COPY shared/ ./shared/
+COPY infrastructure/ ./infrastructure/
+COPY agents/graph_query/ ./agents/graph_query/
+
+EXPOSE 8003                                     
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:8003/health || exit 1   
+
+CMD ["python", "-m", "agents.graph_query.server"]

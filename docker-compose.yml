@@ -1,0 +1,187 @@
+version: "3.9"
+
+services:
+  neo4j:
+    image: neo4j:5.24-community
+    container_name: fastapi-chat-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-securexxxxxxx123}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_pagecache_size: 512M
+      NEO4J_dbms_memory_heap_max__size: 512M
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fastapi-chat-network
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: fastapi-chat-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+  orchestrator:
+    build:
+      context: ./fastapi-repo-chat-agent
+      dockerfile: agents/orchestrator/dockerfile
+    container_name: fastapi-chat-orchestrator
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-securepassword123}
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - ORCHESTRATOR_PORT=8001
+      - ORCHESTRATOR_GRAPH_QUERY_URL=http://graph-query:8003
+      - ORCHESTRATOR_INDEXER_URL=http://indexer:8002
+      - ORCHESTRATOR_CODE_ANALYST_URL=http://code-analyst:8004
+    ports:
+      - "8001:8001"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+  indexer:
+    build:
+      context: ./fastapi-repo-chat-agent
+      dockerfile: agents/indexer/dockerfile
+    container_name: fastapi-chat-indexer
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-securepassword123}
+      - REDIS_URL=redis://redis:6379/0
+      - INDEXER_REPO_URL=https://github.com/fastapi/fastapi.git
+      - INDEXER_REPO_LOCAL_PATH=/app/repo/fastapi
+      - INDEXER_PORT=8002
+    volumes:
+      - repo_data:/app/repo
+    ports:
+      - "8002:8002"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+  graph-query:
+    build:
+      context: ./fastapi-repo-chat-agent
+      dockerfile: agents/graph_query/dockerfile
+    container_name: fastapi-chat-graph-query
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-securepassword123}
+      - GRAPH_QUERY_PORT=8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+  code-analyst:
+    build:
+      context: ./fastapi-repo-chat-agent
+      dockerfile: agents/code_analyst/dockerfile
+    container_name: fastapi-chat-code-analyst
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-securepassword123}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CODE_ANALYST_PORT=8004
+    ports:
+      - "8004:8004"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+  gateway:
+    build:
+      context: ./fastapi-repo-chat-agent
+      dockerfile: gateway/dockerfile
+    container_name: fastapi-chat-gateway
+    environment:
+      - GATEWAY_ORCHESTRATOR_URL=http://orchestrator:8001
+      - GATEWAY_INDEXER_URL=http://indexer:8002
+      - GATEWAY_GRAPH_QUERY_URL=http://graph-query:8003
+      - GATEWAY_CODE_ANALYST_URL=http://code-analyst:8004
+      - GATEWAY_SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - GATEWAY_PORT=8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+      graph-query:
+        condition: service_healthy
+      code-analyst:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fastapi-chat-network
+
+networks:
+  fastapi-chat-network:
+    driver: bridge
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:
+  repo_data:

@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl git && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    mcp fastapi uvicorn[standard] httpx \
+    pydantic pydantic-settings \
+    openai neo4j redis structlog tenacity anyio
+
+COPY shared/ ./shared/
+COPY infrastructure/ ./infrastructure/
+COPY agents/orchestrator/ ./agents/orchestrator/
+
+EXPOSE 8001
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+CMD ["uvicorn", "agents.orchestrator.server:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -1,0 +1,27 @@
+FROM python:3.11-slim AS base
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+FROM base AS builder
+COPY pyproject.toml .
+RUN pip install --no-cache-dir hatchling && \
+    pip install --no-cache-dir \
+    mcp fastapi uvicorn[standard] httpx pydantic pydantic-settings \
+    openai neo4j redis structlog tenacity anyio gitpython
+
+FROM builder AS final
+COPY shared/ ./shared/
+COPY gateway/ ./gateway/
+
+EXPOSE 8000                               
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1  
+
+CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
